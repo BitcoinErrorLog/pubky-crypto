@@ -1,6 +1,4 @@
-# Response to Antoine's Review
-
-Hi Antoine,
+# Response to Latest Review
 
 Thank you for the thorough review. We've gone through every theme you raised, verified against the codebase, and built an actionable plan. Here's where we landed on each point.
 
@@ -138,7 +136,7 @@ John
 
 # Pubky Stack Finalization Plan (v2)
 
-Comprehensive plan to finalize the spec, extract `pubky-crypto`, clean up `pubky-noise`, and propagate changes through all downstream repos. Incorporates all of Antoine's review feedback plus gaps identified in review.
+Comprehensive plan to finalize the spec, extract `pubky-crypto`, clean up `pubky-noise`, and propagate changes through all downstream repos. Incorporates all of Reviewer's review feedback plus gaps identified in review.
 
 > [!IMPORTANT]
 > This plan results in: **finalized PUBKY_CRYPTO_SPEC**, **finalized pubky-noise**, **scaffolded pubky-crypto**, and **updated paykit-rs, atomicity-core, atomicity-research, pubky-ring, bitkit-android, bitkit-ios, pubky-knowledge-base**.
@@ -201,7 +199,7 @@ Current sections: §1-12 + Appendices A-E
 
 **1.2 — Update §11: Security Considerations**
 
-- Add "data remanence" argument for module extraction (Antoine)
+- Add "data remanence" argument for module extraction 
 - Add rate-limit requirement for Ring interface calls (prevent memory exhaustion attack — BIP32 prefix precedent)
 - Add note on not exposing unbounded Ring API calls
 
@@ -212,7 +210,7 @@ Current sections: §1-12 + Appendices A-E
 
 **1.4 — Add §13: Ring Transport Abstraction**
 
-The Ring-to-App communication interface (identified by Antoine as missing):
+The Ring-to-App communication interface (identified by reviewer as missing):
 
 - Transport-agnostic interface (bytes-in/bytes-out, C-compatible)
 - Current MVP: Relay + deep links ([AUTH.md](file:///Users/john/vibes-dev/pubky-core/docs/AUTH.md))
@@ -221,7 +219,7 @@ The Ring-to-App communication interface (identified by Antoine as missing):
 
 **1.5 — Add §14: Transport Architecture**
 
-Document Antoine's analysis with normative MVP pick:
+Document Reviewers's analysis with normative MVP pick:
 
 | Model | Description | MVP? |
 |-------|-------------|------|
@@ -231,7 +229,7 @@ Document Antoine's analysis with normative MVP pick:
 
 **1.6 — Add §12.2: Connection State Machine (non-normative)**
 
-Antoine's proposed shared-channel architecture as future target:
+Reviewer's proposed shared-channel architecture as future target:
 
 ```
 Subscribers (Paykit, Atomicity)
@@ -340,7 +338,7 @@ region = { version = "3", optional = true }
 | `secure_mem.rs` | 216 | `LockedBytes`, mlock helpers (feature-gated) | All tests move |
 | **ed25519 helpers** | ~30 | `ed25519_sign`, `ed25519_verify` from `identity_payload.rs` | Move to pubky-crypto (pure crypto, no transport) |
 
-> **NOT moved** (per Antoine): async-messaging routing (storage_queue, handshake_queue, session_manager, transport, mobile_manager, streaming, datalink_adapter, client, server). These stay in pubky-noise.
+> **NOT moved** (per Reviewer): async-messaging routing (storage_queue, handshake_queue, session_manager, transport, mobile_manager, streaming, datalink_adapter, client, server). These stay in pubky-noise.
 
 #### Error type split details
 
@@ -429,10 +427,10 @@ paykit-rs currently imports crypto primitives from `pubky_noise`. Re-exports mea
 | [protocol/sb2.rs](file:///Users/john/vibes-dev/paykit-rs/paykit-lib/src/protocol/sb2.rs) | `Sb2Header`, `Sb2`, `sb2_build_aad`, `sb2_compute_sig_input`, `ed25519_sign`, `ed25519_verify` |
 | [keys.rs](file:///Users/john/vibes-dev/paykit-rs/paykit-lib/src/keys.rs) | `ukd::*`, `x25519_generate_keypair`, `x25519_public_from_secret`, `Sb2Header::compute_inbox_kid` |
 
-#### Subscription nonces (Antoine Theme 7)
+#### Subscription nonces (Reviewer Theme 7)
 
 > [!WARNING]
-> Antoine identified that paykit-subscriptions has its own nonce cache that would be lost on crash. Nonces should be **derivable from Ring root secret**.
+> Reviewer identified that paykit-subscriptions has its own nonce cache that would be lost on crash. Nonces should be **derivable from Ring root secret**.
 
 - Review `paykit-subscriptions` nonce management
 - If standalone random nonces: convert to HKDF-derived nonces from seed + counter
@@ -511,7 +509,7 @@ cd ~/vibes-dev/bitkit-android && ./gradlew compileDevDebugKotlin && ./gradlew te
 
 ### ContextId Ownership
 
-Antoine said "all what is ContextId shouldn't be in paykit." Currently in [paykit-lib/src/protocol/scope.rs](file:///Users/john/vibes-dev/paykit-rs/paykit-lib/src/protocol/scope.rs).
+Reviewer said "all what is ContextId shouldn't be in paykit." Currently in [paykit-lib/src/protocol/scope.rs](file:///Users/john/vibes-dev/paykit-rs/paykit-lib/src/protocol/scope.rs).
 
 **Decision**: keep `context_id` in paykit for now. Rationale:
 - ContextId generation involves `generate_context_id()` (random) and legacy `pair_context_id()` (SHA256 of sorted pubkeys)
@@ -521,7 +519,7 @@ Antoine said "all what is ContextId shouldn't be in paykit." Currently in [payki
 
 ### `rate_limit.rs` / `metrics.rs` Extraction
 
-Antoine noted these in paykit-interactive could be shared. **Decision**: defer to post-MVP. No code change now, but note in Phase 8 docs as planned future work.
+Reviewer noted these in paykit-interactive could be shared. **Decision**: defer to post-MVP. No code change now, but note in Phase 8 docs as planned future work.
 
 ### UniFFI Schema Updates
 

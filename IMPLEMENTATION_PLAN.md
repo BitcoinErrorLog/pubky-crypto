@@ -405,3 +405,27 @@ flowchart LR
 ```
 
 **Each phase gate**: tests must pass (where applicable) before proceeding.
+
+---
+
+## Completion Status
+
+| Phase | Status | Verified |
+|-------|--------|----------|
+| Phase 0: Knowledge Base Updates | ✅ Complete | Pubky Noise.md, Paykit.md, Pubky Ring.md updated |
+| Phase 1: Spec Finalization | ✅ Complete | §7.7.3, §11.7-11.8, §12.3-12.5, §13, §14 added; TOC + Appendix C updated |
+| Phase 2: Naming & API Cleanup | ✅ Complete | All renames applied; paykit-lib 2.0.0; atomicity-research updated |
+| Phase 3+4: pubky-crypto + pubky-noise | ✅ Complete | pubky-crypto 0.1.0 with 8 modules, 32 tests; pubky-noise re-exports, 162 tests |
+| Phase 5: paykit-rs Imports | ✅ Complete | All 8 workspace crates migrated; cargo test --all --all-features passes |
+| Phase 6: Update pubky-ring | ✅ Complete | Android .so + Kotlin, iOS xcframework + Swift rebuilt; TS compiles; 178 Jest tests pass |
+| Phase 7: Update Bitkit Apps | ✅ Complete | Android: 663 tests pass; iOS: BUILD SUCCEEDED, no crypto-related failures |
+| Phase 8: Documentation Updates | ✅ Complete | All docs updated with pubky-crypto references |
+
+### Cross-Cutting Concerns Resolution
+
+| Concern | Resolution |
+|---------|------------|
+| ContextId ownership | Kept in paykit-lib per decision; tagged "may move in future revision" in spec |
+| rate_limit.rs / metrics.rs extraction | Deferred to post-MVP; noted in MASTERGUIDE |
+| UniFFI schema updates | Verified: zero old names in paykit-mobile/src/lib.rs; FFI types (AuthenticatedTransportFFI) remain as FFI-layer names, distinct from renamed traits |
+| async-messaging in pubky-crypto | Confirmed NOT moved: storage_queue, handshake_queue, session_manager, transport, mobile_manager, streaming, datalink_adapter, client, server all stay in pubky-noise |

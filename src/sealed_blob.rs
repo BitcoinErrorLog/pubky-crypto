@@ -170,6 +170,17 @@ fn compute_kid(recipient_pk: &[u8; 32]) -> String {
     hex::encode(&hash[..16])
 }
 
+/// Compute inbox_kid using the old 8-byte format for backward compatibility.
+///
+/// Older builds of the library used `hash[..8]` (16 hex chars) instead of
+/// `hash[..16]` (32 hex chars). This function is used during decryption fallback
+/// to support envelopes encrypted by those older builds.
+fn compute_kid_short(recipient_pk: &[u8; 32]) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(recipient_pk);
+    hex::encode(&hash[..8])
+}
+
 /// Base64url encode without padding.
 fn base64url_encode(data: &[u8]) -> String {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -331,8 +342,32 @@ fn build_spec_aad(
     nonce: &[u8; NONCE_SIZE_V2],
     purpose: Option<&str>,
 ) -> Vec<u8> {
-    // Compute inbox_kid from recipient's X25519 public key
-    let kid_hex = compute_kid(recipient_pk);
+    build_spec_aad_with_kid_hex(&compute_kid(recipient_pk), owner_peerid, canonical_path, ephemeral_pk, nonce, purpose)
+}
+
+/// Build AAD with the old-style 8-byte kid (16 hex chars) for backward
+/// compatibility with older builds that used `hash[..8]` in `compute_kid`.
+fn build_spec_aad_short_kid(
+    owner_peerid: &[u8; 32],
+    canonical_path: &str,
+    ephemeral_pk: &[u8; 32],
+    recipient_pk: &[u8; 32],
+    nonce: &[u8; NONCE_SIZE_V2],
+    purpose: Option<&str>,
+) -> Vec<u8> {
+    build_spec_aad_with_kid_hex(&compute_kid_short(recipient_pk), owner_peerid, canonical_path, ephemeral_pk, nonce, purpose)
+}
+
+/// Shared helper: build AAD from a precomputed kid hex string.
+fn build_spec_aad_with_kid_hex(
+    kid_hex: &str,
+    owner_peerid: &[u8; 32],
+    canonical_path: &str,
+    ephemeral_pk: &[u8; 32],
+    nonce: &[u8; NONCE_SIZE_V2],
+    purpose: Option<&str>,
+) -> Vec<u8> {
+    // Parse kid hex string into 16-byte array (zero-padded if shorter)
     let mut inbox_kid = [0u8; 16];
     for (i, chunk) in kid_hex.as_bytes().chunks(2).enumerate() {
         if i < 16 {
@@ -538,7 +573,7 @@ pub fn sealed_blob_decrypt_with_context(
     // Derive symmetric key (v2)
     let key = derive_symmetric_key_v2(&shared_secret, &ephemeral_pk, &recipient_pk);
     
-    // Try CBOR-based AAD first (minimal CBOR header format)
+    // Try CBOR-based AAD first (minimal CBOR header format, current 16-byte kid)
     let cbor_aad = build_spec_aad(
         owner_peerid,
         canonical_path,
@@ -552,7 +587,22 @@ pub fn sealed_blob_decrypt_with_context(
         return Ok(plaintext);
     }
     
-    // Fall back to legacy JSON-based AAD for older envelopes
+    // Fallback: CBOR-based AAD with old 8-byte kid (for envelopes encrypted by
+    // older builds that used compute_kid with hash[..8] instead of hash[..16])
+    let cbor_aad_short = build_spec_aad_short_kid(
+        owner_peerid,
+        canonical_path,
+        &ephemeral_pk,
+        &recipient_pk,
+        &nonce,
+        envelope.purpose.as_deref(),
+    );
+    
+    if let Ok(plaintext) = xchacha20poly1305_decrypt(&key, &nonce, &ciphertext, &cbor_aad_short) {
+        return Ok(plaintext);
+    }
+    
+    // Fall back to legacy JSON-based AAD for older envelopes (current kid)
     let json_aad = build_legacy_json_aad(
         owner_peerid,
         canonical_path,
@@ -1013,6 +1063,142 @@ mod tests {
         // Has epk but no version - NOT a sealed blob
         assert!(!is_sealed_blob(r#"{"epk":"abc","v":3}"#)); // v3 not supported
         assert!(!is_sealed_blob(r#"{"epk":"abc"}"#));
+    }
+
+    #[test]
+    fn test_roundtrip_encrypt_decrypt_with_context() {
+        // This test simulates the exact Bitkit↔Ring secure handoff flow
+        let (recipient_sk, recipient_pk) = x25519_generate_keypair();
+        let plaintext = b"hello world from secure handoff";
+        
+        // Generate a fake Ed25519 keypair for owner_peerid
+        use ed25519_dalek::SigningKey;
+        let mut owner_seed = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut owner_seed);
+        let signing_key = SigningKey::from_bytes(&owner_seed);
+        let owner_peerid_bytes = signing_key.verifying_key().to_bytes();
+        
+        let canonical_path = "/pub/paykit.app/v0/handoff/b00a77d66e5d8bc2deadbeef";
+        
+        // Encrypt with context (what Ring does)
+        let envelope_json = sealed_blob_encrypt_with_context(
+            &recipient_pk,
+            plaintext,
+            &owner_peerid_bytes,
+            canonical_path,
+            Some("handoff"),
+        ).unwrap();
+        
+        // Simulate JSON.parse → JSON.stringify roundtrip (what Ring does before put)
+        let parsed: serde_json::Value = serde_json::from_str(&envelope_json).unwrap();
+        let re_serialized = serde_json::to_string(&parsed).unwrap();
+        
+        // Decrypt with context (what Bitkit does)
+        let decrypted = sealed_blob_decrypt_with_context(
+            &recipient_sk,
+            &re_serialized,
+            &owner_peerid_bytes,
+            canonical_path,
+        ).unwrap();
+        
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_roundtrip_encrypt_decrypt_with_context_no_json_roundtrip() {
+        // Same test but without JSON roundtrip - directly use the envelope
+        let (recipient_sk, recipient_pk) = x25519_generate_keypair();
+        let plaintext = b"direct envelope test";
+        
+        use ed25519_dalek::SigningKey;
+        let mut owner_seed = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut owner_seed);
+        let signing_key = SigningKey::from_bytes(&owner_seed);
+        let owner_peerid_bytes = signing_key.verifying_key().to_bytes();
+        
+        let canonical_path = "/pub/paykit.app/v0/handoff/test123";
+        
+        let envelope_json = sealed_blob_encrypt_with_context(
+            &recipient_pk,
+            plaintext,
+            &owner_peerid_bytes,
+            canonical_path,
+            Some("handoff"),
+        ).unwrap();
+        
+        let decrypted = sealed_blob_decrypt_with_context(
+            &recipient_sk,
+            &envelope_json,
+            &owner_peerid_bytes,
+            canonical_path,
+        ).unwrap();
+        
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn test_roundtrip_with_short_kid_backward_compat() {
+        // Simulate an envelope encrypted by an older build that used hash[..8] for compute_kid.
+        // The decryptor should try the short-kid fallback and succeed.
+        let (recipient_sk, recipient_pk) = x25519_generate_keypair();
+        let plaintext = b"short kid test payload";
+        
+        use ed25519_dalek::SigningKey;
+        let mut owner_seed = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut owner_seed);
+        let signing_key = SigningKey::from_bytes(&owner_seed);
+        let owner_peerid_bytes = signing_key.verifying_key().to_bytes();
+        
+        let canonical_path = "/pub/paykit.app/v0/handoff/shorttest123";
+        let purpose = Some("handoff");
+        
+        // Manually encrypt using the OLD short kid (simulating old build)
+        let (ephemeral_sk, ephemeral_pk) = x25519_generate_keypair();
+        let ephemeral_sk = Zeroizing::new(ephemeral_sk);
+        let shared_secret = x25519_shared_secret(&ephemeral_sk, &recipient_pk);
+        let key = derive_symmetric_key_v2(&shared_secret, &ephemeral_pk, &recipient_pk);
+        
+        let mut nonce = [0u8; NONCE_SIZE_V2];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
+        
+        // Build AAD with SHORT kid (old behavior)
+        let aad = build_spec_aad_short_kid(
+            &owner_peerid_bytes,
+            canonical_path,
+            &ephemeral_pk,
+            &recipient_pk,
+            &nonce,
+            purpose,
+        );
+        
+        let ciphertext = xchacha20poly1305_encrypt(&key, &nonce, plaintext, &aad);
+        
+        // Build envelope
+        let envelope = SealedBlobEnvelope {
+            v: SEALED_BLOB_VERSION,
+            epk: base64url_encode(&ephemeral_pk),
+            nonce: base64url_encode(&nonce),
+            ct: base64url_encode(&ciphertext),
+            kid: Some(compute_kid_short(&recipient_pk)), // OLD 16-char kid
+            purpose: purpose.map(String::from),
+            sender: None,
+            sig: None,
+        };
+        
+        let envelope_json = serde_json::to_string(&envelope).unwrap();
+        
+        // Verify the kid is 16 chars (old format)
+        assert_eq!(envelope.kid.as_ref().unwrap().len(), 16);
+        
+        // Decrypt using sealed_blob_decrypt_with_context (should use short-kid fallback)
+        let decrypted = sealed_blob_decrypt_with_context(
+            &recipient_sk,
+            &envelope_json,
+            &owner_peerid_bytes,
+            canonical_path,
+        ).unwrap();
+        
+        assert_eq!(decrypted, plaintext);
     }
 
     #[test]
